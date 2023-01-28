@@ -1,1 +1,1 @@
-copy and paste the folder "stock_crawler" to directory "Colab_Notebooks"
+Copy and paste the folder "stock_crawler" to directory "Colab_Notebooks".
