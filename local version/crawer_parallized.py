@@ -1,7 +1,5 @@
-import asyncio
+#爬蟲程式定義
 import time
-from concurrent.futures.thread import ThreadPoolExecutor
-
 from selenium import webdriver
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.support.ui import WebDriverWait
@@ -10,7 +8,14 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import ElementNotInteractableException
+from concurrent.futures.thread import ThreadPoolExecutor
 
+finished = set(map(lambda x: x[:-8], os.listdir("EPS_files")))
+# get N * 50 season data
+N = 5
+load_time = 0.3
+# how many thread to create
+Thread_number = 4
 
 chrome_options = webdriver.ChromeOptions()
 # 添加 User-Agent
@@ -22,75 +27,61 @@ chrome_options.add_argument('window-size=1920x1080')
 chrome_options.add_argument('blink-settings=imagesEnabled=false')
 # 瀏覽器不提供視覺化頁面
 chrome_options.add_argument('--headless')
+# 最高權限
+chrome_options.add_argument('--no-sandbox')
+# 改寫docker記憶體位置
+chrome_options.add_argument('--disable-dev-shm-usage')
 
-executor = ThreadPoolExecutor(3)
-N = 5
+drivers = [webdriver.Chrome("/usr/bin/chromedriver", chrome_options=chrome_options) for _ in range(Thread_number)]
 
-count = 0
-def scrape(stock, *, loop):
-    loop.run_in_executor(executor, scraper, stock)
+def keybroad_action(browser, key, repeat=1, sleep=0):
 
+    for _ in range(repeat):
+        actions = ActionChains(browser)
+        actions.send_keys(key)
+        actions.perform()
+        time.sleep(sleep)
+    return
 
-def scraper(stock):
+def crawing(stock, browser):
+    if stock in finished:
+      print(f"{stock} already collected")
+      return
     print(f"Ready to get: {stock}")
     try:
-        browser = webdriver.Chrome(chrome_options=chrome_options)
         browser.get(f"https://invest.cnyes.com/usstock/detail/{stock}/earnings/estimate#fixed")
-        # resultLocator = '//body'
-        # WebDriverWait(browser, 10).until(EC.visibility_of_element_located((By.XPATH, resultLocator)))
+        
         time.sleep(3)
-        browser.execute_script("window.scrollTo(0, 2500)")
-        # 待處理cookie按鈕
-        for i in range(1, N):
-            button = browser.find_elements("xpath",
-                                           '//*[@id="anue-ga-wrapper"]/div[2]/div[3]/section/div/div/div/div[2]/div[4]/div[2]/button[1]')[
-                0]
-            if len(button.get_attribute("style")) > 0:
-                break
-            button.click()
-            time.sleep(1)
-    except (IndexError, ElementNotInteractableException):
-        print(f"{stock} may only one page")
-        with open(f"EPS_files/{stock}_EPS.txt", "w") as f:
-            page_results = browser.find_elements("xpath", "//tbody")
-            f.writelines(item.text for item in page_results)
-        return
+        keybroad_action(browser, Keys.TAB, 19)
+        keybroad_action(browser, Keys.ENTER, N - 1, load_time)
     except Exception as e:
         print(e)
         print(f"not found stock ticker {stock}")
         return
     try:
         with open(f"EPS_files/{stock}_EPS.txt", "w") as f:
-            # print(browser.find_elements(By.XPATH, "/html/body/div[1]/div/div[2]/div[3]/section/div/div/div/div[2]/div[4]/div[3]/div[2]/span/a[1]"))
-            for i in range(1, N + 1):
-                WebDriverWait(browser, 2).until(
+            page_results = browser.find_elements("xpath", "//tbody")
+            f.writelines(item.text for item in page_results)
+            keybroad_action(browser, Keys.TAB)
+            for i in range(1, N):
+                WebDriverWait(browser, 1).until(
                     EC.visibility_of_element_located((By.XPATH, f'//*[@id="DataTables_Table_0_paginate"]/span/a[{i}]')))
-                time.sleep(0.5)
-
-                # buttonx = browser.find_elements(By.LINK_TEXT, str(i))
-                # buttonx[0].click()
-
-                actions = ActionChains(browser)
-                actions.send_keys(Keys.TAB)
-                actions.send_keys(Keys.ENTER)
-                actions.perform()
+                time.sleep(load_time)
+                keybroad_action(browser, Keys.TAB)
+                keybroad_action(browser, Keys.ENTER)
                 page_results = browser.find_elements("xpath", "//tbody")
                 f.writelines(item.text for item in page_results)
         print(f"finish to get: {stock}")
     except TimeoutException:
-        print(f"{stock} may not complete")
+        print(f"got {i} page on {stock}")
     except IndexError:
         print(f"{stock} IndexError on step 2")
     except:
-        print(f"fail to get: {stock} error on step 2")
-
-loop = asyncio.get_event_loop()
-
+        print(f"other exception on {stock} on step 2")
+#爬蟲程式執行
 with open("stock_list.txt", "r") as f:
     stock_list = f.read().split()
 
-
-for stock in stock_list[:20]:
-    scrape(stock, loop=loop)
-
-loop.run_until_complete(asyncio.gather(*asyncio.all_tasks(loop)))
+for i in range(0, len(stock_list), Thread_number):
+  with ThreadPoolExecutor(max_workers=Thread_number) as executor:
+    bucket = executor.map(crawing, stock_list[i:i+Thread_number], drivers)
